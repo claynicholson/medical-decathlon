@@ -1,7 +1,4 @@
-#!/bin/bash
-# -*- coding: utf-8 -*-
-#
-# Copyright (c) 2019 Intel Corporation
+# Copyright (c) 2020 Intel Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +15,5 @@
 # SPDX-License-Identifier: EPL-2.0
 #
 
-PLUGIN_LIB=${INTEL_OPENVINO_DIR}/inference_engine/lib/intel64/
+horovodrun -np 4 -H localhost:4 --binding-args="--map-by ppr:2:socket:pe=10" --mpi-args="--report-bindings" python train_horovod.py
 
-cd build
-./UnetOpenVino -d ${PLUGIN_LIB}

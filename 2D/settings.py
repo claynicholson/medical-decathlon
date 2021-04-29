@@ -20,12 +20,11 @@
 import psutil
 import os
 
-DATA_PATH = os.path.join("../../data/decathlon/")
-DATA_FILENAME = "Task01_BrainTumour.h5"
+DATA_PATH=os.path.join("/data/medical_decathlon/Task01_BrainTumour")
 OUT_PATH = os.path.join("./output/")
-INFERENCE_FILENAME = "unet_model_for_decathlon.hdf5"
+INFERENCE_FILENAME = "2d_unet_decathlon"
 
-EPOCHS = 40  # Number of epochs to train
+EPOCHS = 30  # Number of epochs to train
 
 """
 If the batch size is too small, then training is unstable.
@@ -41,16 +40,16 @@ tumors in each batch.
 BATCH_SIZE = 128
 
 # Using Adam optimizer
-LEARNING_RATE = 0.0001  # 0.00005  # 0.00005
-WEIGHT_DICE_LOSS = 0.9  # Combined loss weight for dice versus BCE
+LEARNING_RATE = 0.0001  # 0.00005
+WEIGHT_DICE_LOSS = 0.85  # Combined loss weight for dice versus BCE
 
-FEATURE_MAPS = 32  # 32 is a good number, but requires about 16 GB of memory
+FEATURE_MAPS = 16
 PRINT_MODEL = True  # Print the model
 
 # CPU specific parameters for multi-threading.
 # These can help take advantage of multi-core CPU systems
 # and significantly boosts training speed with MKL-DNN TensorFlow.
-BLOCKTIME = 1000
+BLOCKTIME = 0
 NUM_INTER_THREADS = 1
 # Default is to use the number of physical cores available
 
@@ -59,13 +58,12 @@ NUM_INTER_THREADS = 1
 import multiprocessing
 NUM_INTRA_THREADS = min(len(psutil.Process().cpu_affinity()), psutil.cpu_count(logical=False))
 
+CROP_DIM=128  # Crop height and width to this size
+SEED=816      # Random seed
+TRAIN_TEST_SPLIT=0.80 # The train/test split
 
 CHANNELS_FIRST = False
-USE_KERAS_API = True   # If true, then use Keras API. Otherwise, use tf.keras
-# 28 DEC 2018: tf.keras has some bugs in the use of HDF5 and with the custom
-# loss function. Recommend to use Keras API when in doubt.
-# If true, then use bilinear interpolation. Otherwise, transposed convolution
 USE_UPSAMPLING = False
 USE_AUGMENTATION = True  # Use data augmentation during training
-USE_DROPOUT = False  # Use spatial dropout in model
-USE_PCONV = False   # If True, Partial Convolution based padding will be used. See https://arxiv.org/pdf/1811.11718.pdf
+USE_DROPOUT = True  # Use spatial dropout in model
+USE_PCONV = False  # If True, Partial Convolution based padding will be used. See https://arxiv.org/pdf/1811.11718.pdf

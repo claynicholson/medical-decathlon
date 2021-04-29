@@ -1,7 +1,6 @@
-#!/usr/bin/env bash
 # -*- coding: utf-8 -*-
 #
-# Copyright (c) 2019 Intel Corporation
+# Copyright (c) 2020 Intel Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,10 +17,22 @@
 # SPDX-License-Identifier: EPL-2.0
 #
 
-ssh demo02 "cd topologies && git pull"
+DATA_PATH="../data/decathlon/Task01_BrainTumour/"
+SAVED_MODEL_NAME="3d_unet_decathlon"
 
-ssh demo03 "cd topologies && git pull"
+EPOCHS=40
+BATCH_SIZE=8
+TILE_HEIGHT=144
+TILE_WIDTH=144
+TILE_DEPTH=144
+NUMBER_INPUT_CHANNELS=1
+NUMBER_OUTPUT_CLASSES=1
 
-ssh demo04 "cd topologies && git pull"
+TRAIN_TEST_SPLIT=0.80
+VALIDATE_TEST_SPLIT=0.50
 
+PRINT_MODEL=False
+FILTERS=16
+USE_UPSAMPLING=False
 
+RANDOM_SEED=816

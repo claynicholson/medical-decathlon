@@ -30,7 +30,7 @@ import os
 import tensorflow as tf  # conda install -c anaconda tensorflow
 import settings   # Use the custom settings.py file for default parameters
 
-from data import load_data
+from dataloader import DatasetGenerator, get_decathlon_filelist
 
 import numpy as np
 
@@ -41,14 +41,8 @@ For best CPU speed set the number of intra and inter threads
 to take advantage of multi-core systems.
 See https://github.com/intel/mkl-dnn
 """
-#CONFIG = tf.ConfigProto(intra_op_parallelism_threads=args.num_threads,
-#                        inter_op_parallelism_threads=args.num_inter_threads)
 
-#SESS = tf.Session(config=CONFIG)
-SESS = tf.Session()
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # Get rid of the AVX, SSE warnings
-os.environ["OMP_NUM_THREADS"] = str(args.num_threads)
-os.environ["KMP_BLOCKTIME"] = "1"
 
 # If hyperthreading is enabled, then use
 os.environ["KMP_AFFINITY"] = "granularity=thread,compact,1,0"
@@ -56,40 +50,54 @@ os.environ["KMP_AFFINITY"] = "granularity=thread,compact,1,0"
 # If hyperthreading is NOT enabled, then use
 #os.environ["KMP_AFFINITY"] = "granularity=thread,compact"
 
-if args.keras_api:
-    import keras as K
-else:
-    from tensorflow import keras as K
+os.environ["KMP_BLOCKTIME"] = str(args.blocktime)
 
-print("TensorFlow version: {}".format(tf.__version__))
-print("Intel MKL-DNN is enabled = {}".format(tf.pywrap_tensorflow.IsMklEnabled()))
+os.environ["OMP_NUM_THREADS"] = str(args.num_threads)
+os.environ["INTRA_THREADS"] = str(args.num_threads)
+os.environ["INTER_THREADS"] = str(args.num_inter_threads)
+os.environ["KMP_SETTINGS"] = "0"  # Show the settings at runtime
 
-print("Keras API version: {}".format(K.__version__))
+def test_intel_tensorflow():
+    """
+    Check if Intel version of TensorFlow is installed
+    """
+    import tensorflow as tf
 
-if args.channels_first:
-    K.backend.set_image_data_format("channels_first")
+    print("We are using Tensorflow version {}".format(tf.__version__))
 
-K.backend.set_session(SESS)
+    major_version = int(tf.__version__.split(".")[0])
+    if major_version >= 2:
+        from tensorflow.python import _pywrap_util_port
+        print("Intel-optimizations (DNNL) enabled:",
+              _pywrap_util_port.IsMklEnabled())
+    else:
+        print("Intel-optimizations (DNNL) enabled:",
+              tf.pywrap_tensorflow.IsMklEnabled())
 
-def train_and_predict(data_path, data_filename, batch_size, n_epoch):
+if __name__ == "__main__":
+
+    START_TIME = datetime.datetime.now()
+    print("Started script on {}".format(START_TIME))
+
+    print("Runtime arguments = {}".format(args))
+    test_intel_tensorflow() # Print if we are using Intel-optimized TensorFlow
+
     """
     Create a model, load the data, and train it.
     """
 
     """
-    Step 1: Load the data
+    Step 1: Define a data loader
     """
-    hdf5_filename = os.path.join(data_path, data_filename)
     print("-" * 30)
-    print("Loading the data from HDF5 file ...")
+    print("Loading the data from the Medical Decathlon directory to a TensorFlow data loader ...")
     print("-" * 30)
 
-    imgs_train, msks_train, imgs_validation, msks_validation, \
-        imgs_testing, msks_testing = \
-        load_data(hdf5_filename, args.batch_size,
-                  [args.crop_dim, args.crop_dim],
-                  args.channels_first, args.seed)
+    trainFiles, validateFiles, testFiles = get_decathlon_filelist(data_path=args.data_path, seed=args.seed, split=args.split)
 
+    ds_train = DatasetGenerator(trainFiles, batch_size=args.batch_size, crop_dim=[args.crop_dim,args.crop_dim], augment=True, seed=args.seed)
+    ds_validation = DatasetGenerator(validateFiles, batch_size=args.batch_size, crop_dim=[args.crop_dim,args.crop_dim], augment=False, seed=args.seed)
+    ds_test = DatasetGenerator(testFiles, batch_size=args.batch_size, crop_dim=[args.crop_dim,args.crop_dim], augment=False, seed=args.seed)
 
     print("-" * 30)
     print("Creating and compiling model ...")
@@ -103,16 +111,20 @@ def train_and_predict(data_path, data_filename, batch_size, n_epoch):
     else:
         from model import unet
 
-    unet_model = unet()
-    model = unet_model.create_model(imgs_train.shape, msks_train.shape)
+    unet_model = unet(channels_first=args.channels_first,
+                 fms=args.featuremaps,
+                 output_path=args.output_path,
+                 inference_filename=args.inference_filename,
+                 learning_rate=args.learningrate,
+                 weight_dice_loss=args.weight_dice_loss,
+                 use_upsampling=args.use_upsampling,
+                 use_dropout=args.use_dropout,
+                 print_model=args.print_model)
+
+    model = unet_model.create_model(
+        ds_train.get_input_shape(), ds_train.get_output_shape())
 
     model_filename, model_callbacks = unet_model.get_callbacks()
-
-    # If there is a current saved file, then load weights and start from
-    # there.
-    saved_model = os.path.join(args.output_path, args.inference_filename)
-    if os.path.isfile(saved_model):
-        model.load_weights(saved_model)
 
     """
     Step 3: Train the model on the data
@@ -121,11 +133,10 @@ def train_and_predict(data_path, data_filename, batch_size, n_epoch):
     print("Fitting model with training data ...")
     print("-" * 30)
 
-    model.fit(imgs_train, msks_train,
-              batch_size=batch_size,
-              epochs=n_epoch,
-              validation_data=(imgs_validation, msks_validation),
-              verbose=1, shuffle="batch",
+    model.fit(ds_train,
+              epochs=args.epochs,
+              validation_data=ds_validation,
+              verbose=1,
               callbacks=model_callbacks)
 
     """
@@ -135,30 +146,15 @@ def train_and_predict(data_path, data_filename, batch_size, n_epoch):
     print("Loading the best trained model ...")
     print("-" * 30)
 
-    unet_model.evaluate_model(model_filename, imgs_testing, msks_testing)
+    unet_model.evaluate_model(model_filename, ds_test)
 
     """
-    Step 5: Save frozen TensorFlow version of model
-    This can be convert into OpenVINO format with model optimizer.
+    Step 5: Print the command to convert TensorFlow model into OpenVINO format with model optimizer.
     """
     print("-" * 30)
-    print("Freezing model and saved to a TensorFlow protobuf ...")
     print("-" * 30)
-    unet_model.save_frozen_model(model_filename, imgs_testing.shape)
-
-if __name__ == "__main__":
-
-    # os.system("lscpu")
-
-    START_TIME = datetime.datetime.now()
-    print("Started script on {}".format(START_TIME))
-
-    print("args = {}".format(args))
-    #os.system("uname -a")
-    print("TensorFlow version: {}".format(tf.__version__))
-
-    train_and_predict(args.data_path, args.data_filename,
-                      args.batch_size, args.epochs)
+    unet_model.print_openvino_mo_command(
+        model_filename, ds_test.get_input_shape())
 
     print(
         "Total time elapsed for program = {} seconds".format(

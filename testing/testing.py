@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # ----------------------------------------------------------------------------
-# Copyright 2018 Intel
+# Copyright 2018-2020 Intel
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -21,10 +21,7 @@ import psutil
 import time
 import datetime
 import tensorflow as tf
-
-from tensorflow.python.saved_model import builder as saved_model_builder
-from tensorflow.python.saved_model.signature_def_utils import predict_signature_def
-from tensorflow.python.saved_model import tag_constants
+from tensorflow import keras as K
 
 parser = argparse.ArgumentParser(
     description="Sanity testing for 3D and 2D Convolution Models",add_help=True)
@@ -45,6 +42,11 @@ parser.add_argument("--bz",
                     type = int,
                     default=1,
                     help="Batch size")
+
+parser.add_argument("--no_batch_norm",
+                    action="store_false",
+                    default=True,
+                    help="Don't use batch norm layers")
 
 parser.add_argument("--lr",
                     type = float,
@@ -99,10 +101,6 @@ parser.add_argument("--ngraph",
                     action="store_true",
                     default=False,
                     help="Use ngraph")
-parser.add_argument("--keras_api",
-                    action="store_true",
-                    default=False,
-                    help="Use Keras API. False=Use tf.keras")
 parser.add_argument("--channels_first",
                     action="store_true",
                     default=False,
@@ -121,24 +119,33 @@ os.environ["KMP_AFFINITY"] = "granularity=thread,compact,1,0"
 
 print("Started script on {}".format(datetime.datetime.now()))
 
-print("args = {}".format(args))
-os.system("uname -a")
-print("TensorFlow version: {}".format(tf.__version__))
+def test_intel_tensorflow():
+    """
+    Check if Intel version of TensorFlow is installed
+    """
+    import tensorflow as tf
 
-if args.keras_api:
-    import keras as K
-    print("Using Keras API")
-else:
-    from tensorflow import keras as K
-    print("Using tf.keras")
+    print("We are using Tensorflow version {}".format(tf.__version__))
+
+    major_version = int(tf.__version__.split(".")[0])
+    if major_version >= 2:
+        from tensorflow.python import _pywrap_util_port
+        print("Intel-optimizations (DNNL) enabled:",
+              _pywrap_util_port.IsMklEnabled())
+    else:
+        print("Intel-optimizations (DNNL) enabled:",
+              tf.pywrap_tensorflow.IsMklEnabled())
+
+print(args)
+test_intel_tensorflow()  # Prints if Intel-optimized TensorFlow is used.
+
+os.system("uname -a")
 
 if args.ngraph:
     print("Using nGraph")
     import ngraph_bridge
     if args.channels_first:
         os.environ["NGRAPH_PASS_ENABLES"]="CPUReshapeSinking:1;ReshapeElimination:1"
-
-print("Keras API version: {}".format(K.__version__))
 
 if args.D2:  # Define shape of the tensors (2D)
     dims = (1,2)
@@ -177,18 +184,23 @@ else:        # Define shape of the tensors (3D)
                         args.dim_length,
                         args.num_outputs)
 
-# Optimize CPU threads for TensorFlow
-config = tf.ConfigProto(
-        inter_op_parallelism_threads=args.interop_threads,
-        intra_op_parallelism_threads=args.intraop_threads)
+if tf.__version__ < "2":
+    """
+    Configuration for TensorFlow 1.x
+    """
 
-# Configure only as much GPU memory as needed during runtime
-# Default is to use the entire GPU memory
-config.gpu_options.allow_growth = True
+    # Optimize CPU threads for TensorFlow
+    config = tf.ConfigProto(
+            inter_op_parallelism_threads=args.interop_threads,
+            intra_op_parallelism_threads=args.intraop_threads)
 
-sess = tf.Session(config=config)
+    # Configure only as much GPU memory as needed during runtime
+    # Default is to use the entire GPU memory
+    config.gpu_options.allow_growth = True
 
-K.backend.set_session(sess)
+    sess = tf.Session(config=config)
+
+    K.backend.set_session(sess)
 
 
 def dice_coef(y_true, y_pred, axis=(1,2,3), smooth=1.0):
@@ -211,7 +223,11 @@ def dice_coef_loss(target, prediction, axis=(1,2,3), smooth=1.0):
     t = tf.reduce_sum(target, axis=axis)
     numerator = tf.reduce_mean(2. * intersection + smooth)
     denominator = tf.reduce_mean(t + p + smooth)
-    dice_loss = -tf.log(numerator) + tf.log(denominator)
+
+    if tf.__version__ < "2":
+        dice_loss = -tf.log(numerator) + tf.log(denominator)
+    else:
+        dice_loss = -tf.math.log(numerator) + tf.math.log(denominator)
 
     return dice_loss
 
@@ -223,7 +239,7 @@ else:
     data_format = "channels_last"
 
 def unet3D(input_img, use_upsampling=False, n_out=1, dropout=0.2,
-            print_summary = False, return_model=False):
+            print_summary = False, return_model=False, use_batch_norm=True):
     """
     3D U-Net model
     """
@@ -236,36 +252,44 @@ def unet3D(input_img, use_upsampling=False, n_out=1, dropout=0.2,
                   kernel_initializer="he_uniform")
 
     conv1 = K.layers.Conv3D(name="conv1a", filters=32, **params)(inputs)
-    conv1 = K.layers.BatchNormalization()(conv1)
+    if use_batch_norm:
+        conv1 = K.layers.BatchNormalization()(conv1)
     conv1 = K.layers.Activation("relu")(conv1)
     conv1 = K.layers.Conv3D(name="conv1b", filters=64, **params)(conv1)
-    conv1 = K.layers.BatchNormalization()(conv1)
+    if use_batch_norm:
+        conv1 = K.layers.BatchNormalization()(conv1)
     conv1 = K.layers.Activation("relu")(conv1)
     pool1 = K.layers.MaxPooling3D(name="pool1", pool_size=(2, 2, 2))(conv1)
 
     conv2 = K.layers.Conv3D(name="conv2a", filters=64, **params)(pool1)
-    conv2 = K.layers.BatchNormalization()(conv2)
+    if use_batch_norm:
+        conv2 = K.layers.BatchNormalization()(conv2)
     conv2 = K.layers.Activation("relu")(conv2)
     conv2 = K.layers.Conv3D(name="conv2b", filters=128, **params)(conv2)
-    conv2 = K.layers.BatchNormalization()(conv2)
+    if use_batch_norm:
+        conv2 = K.layers.BatchNormalization()(conv2)
     conv2 = K.layers.Activation("relu")(conv2)
     pool2 = K.layers.MaxPooling3D(name="pool2", pool_size=(2, 2, 2))(conv2)
 
     conv3 = K.layers.Conv3D(name="conv3a", filters=128, **params)(pool2)
-    conv3 = K.layers.BatchNormalization()(conv3)
+    if use_batch_norm:
+        conv3 = K.layers.BatchNormalization()(conv3)
     conv3 = K.layers.Activation("relu")(conv3)
     conv3 = K.layers.Dropout(dropout)(conv3) ### Trying dropout layers earlier on, as indicated in the paper
     conv3 = K.layers.Conv3D(name="conv3b", filters=256, **params)(conv3)
-    conv3 = K.layers.BatchNormalization()(conv3)
+    if use_batch_norm:
+        conv3 = K.layers.BatchNormalization()(conv3)
     conv3 = K.layers.Activation("relu")(conv3)
     pool3 = K.layers.MaxPooling3D(name="pool3", pool_size=(2, 2, 2))(conv3)
 
     conv4 = K.layers.Conv3D(name="conv4a", filters=256, **params)(pool3)
-    conv4 = K.layers.BatchNormalization()(conv4)
+    if use_batch_norm:
+        conv4 = K.layers.BatchNormalization()(conv4)
     conv4 = K.layers.Activation("relu")(conv4)
     conv4 = K.layers.Dropout(dropout)(conv4) ### Trying dropout layers earlier on, as indicated in the paper
     conv4 = K.layers.Conv3D(name="conv4b", filters=512, **params)(conv4)
-    conv4 = K.layers.BatchNormalization()(conv4)
+    if use_batch_norm:
+        conv4 = K.layers.BatchNormalization()(conv4)
     conv4 = K.layers.Activation("relu")(conv4)
 
     if use_upsampling:
@@ -277,10 +301,12 @@ def unet3D(input_img, use_upsampling=False, n_out=1, dropout=0.2,
     up4 = K.layers.concatenate([up, conv3], axis=concat_axis)
 
     conv5 = K.layers.Conv3D(name="conv5a", filters=256, **params)(up4)
-    conv5 = K.layers.BatchNormalization()(conv5)
+    if use_batch_norm:
+        conv5 = K.layers.BatchNormalization()(conv5)
     conv5 = K.layers.Activation("relu")(conv5)
     conv5 = K.layers.Conv3D(name="conv5b", filters=256, **params)(conv5)
-    conv5 = K.layers.BatchNormalization()(conv5)
+    if use_batch_norm:
+        conv5 = K.layers.BatchNormalization()(conv5)
     conv5 = K.layers.Activation("relu")(conv5)
 
     if use_upsampling:
@@ -292,10 +318,12 @@ def unet3D(input_img, use_upsampling=False, n_out=1, dropout=0.2,
     up5 = K.layers.concatenate([up, conv2], axis=concat_axis)
 
     conv6 = K.layers.Conv3D(name="conv6a", filters=128, **params)(up5)
-    conv6 = K.layers.BatchNormalization()(conv6)
+    if use_batch_norm:
+        conv6 = K.layers.BatchNormalization()(conv6)
     conv6 = K.layers.Activation("relu")(conv6)
     conv6 = K.layers.Conv3D(name="conv6b", filters=128, **params)(conv6)
-    conv6 = K.layers.BatchNormalization()(conv6)
+    if use_batch_norm:
+        conv6 = K.layers.BatchNormalization()(conv6)
     conv6 = K.layers.Activation("relu")(conv6)
 
     if use_upsampling:
@@ -307,10 +335,12 @@ def unet3D(input_img, use_upsampling=False, n_out=1, dropout=0.2,
     up6 = K.layers.concatenate([up, conv1], axis=concat_axis)
 
     conv7 = K.layers.Conv3D(name="conv7a", filters=64, **params)(up6)
-    conv7 = K.layers.BatchNormalization()(conv7)
+    if use_batch_norm:
+        conv7 = K.layers.BatchNormalization()(conv7)
     conv7 = K.layers.Activation("relu")(conv7)
     conv7 = K.layers.Conv3D(name="conv7b", filters=64, **params)(conv7)
-    conv7 = K.layers.BatchNormalization()(conv7)
+    if use_batch_norm:
+        conv7 = K.layers.BatchNormalization()(conv7)
     conv7 = K.layers.Activation("relu")(conv7)
     pred = K.layers.Conv3D(name="Prediction", filters=n_out, kernel_size=(1, 1, 1),
                     data_format=data_format, activation="sigmoid")(conv7)
@@ -326,7 +356,7 @@ def unet3D(input_img, use_upsampling=False, n_out=1, dropout=0.2,
         return pred
 
 def unet2D(input_tensor, use_upsampling=False,
-            n_out=1, dropout=0.2, print_summary = False, return_model=False):
+            n_out=1, dropout=0.2, print_summary = False, return_model=False, use_batch_norm=True):
     """
     2D U-Net
     """
@@ -477,7 +507,7 @@ def conv3D(input_img, print_summary = False, dropout=0.2, n_out=1,
         return pred
 
 
-def conv2D(input_tensor, print_summary = False, dropout=0.2, n_out=1, return_model=False):
+def conv2D(input_tensor, print_summary = False, dropout=0.2, n_out=1, return_model=False, use_batch_norm=True):
 
     """
     Simple 2D convolution model based on VGG-16
@@ -529,28 +559,27 @@ def conv2D(input_tensor, print_summary = False, dropout=0.2, n_out=1, return_mod
     else:
         return pred
 
-
 if args.single_class_output:
     if args.D2:    # 2D convnet model
         pred, model = conv2D(tensor_shape,
                        print_summary=args.print_model, n_out=args.num_outputs,
-                       return_model=True)
+                       return_model=True, use_batch_norm=args.no_batch_norm)
     else:            # 3D convet model
         pred, model = conv3D(tensor_shape,
                        print_summary=args.print_model, n_out=args.num_outputs,
-                       return_model=True)
+                       return_model=True, use_batch_norm=args.no_batch_norm)
 else:
 
     if args.D2:    # 2D U-Net model
         pred, model = unet2D(tensor_shape,
                        use_upsampling=args.use_upsampling,
                        print_summary=args.print_model, n_out=args.num_outputs,
-                       return_model=True)
+                       return_model=True, use_batch_norm=args.no_batch_norm)
     else:            # 3D U-Net model
         pred, model = unet3D(tensor_shape,
                        use_upsampling=args.use_upsampling,
                        print_summary=args.print_model, n_out=args.num_outputs,
-                       return_model=True)
+                       return_model=True, use_batch_norm=args.no_batch_norm)
 
 # Freeze layers
 if args.inference:
@@ -607,39 +636,10 @@ else:
 start_time = time.time()
 if args.inference:
    for _ in range(args.epochs):
-       model.predict_generator(get_imgs(), steps=total_steps, verbose=1)
+       model.predict(get_imgs(), steps=total_steps, verbose=1)
 else:
-    model.fit_generator(get_batch(), steps_per_epoch=total_steps,
+    model.fit(get_batch(), steps_per_epoch=total_steps,
                         epochs=args.epochs, verbose=1)
-
-if args.inference:
-   import shutil
-   dirName = "./tensorflow_serving_model"
-   if args.single_class_output:
-      dirName += "_VGG16"
-   else:
-      dirName += "_UNET"
-   if args.D2:
-      dirName += "_2D"
-   else:
-      dirName += "_3D"
-
-   shutil.rmtree(dirName, ignore_errors=True)
-   # Save TensorFlow serving model
-   builder = saved_model_builder.SavedModelBuilder(dirName)
-   # Create prediction signature to be used by TensorFlow Serving Predict API
-   signature = predict_signature_def(inputs={"images": model.input},
-                                      outputs={"scores": model.output})
-   # Save the meta graph and the variables
-   builder.add_meta_graph_and_variables(sess=K.backend.get_session(), tags=[tag_constants.SERVING],
-                                        signature_def_map={"predict": signature})
-
-   builder.save()
-   print("Saved TensorFlow Serving model to: {}".format(dirName))
-
 stop_time = time.time()
 
 print("\n\nTotal time = {:,.3f} seconds".format(stop_time - start_time))
-print("Total images = {:,}".format(args.epochs*args.num_datapoints))
-print("Speed = {:,.3f} images per second".format( \
-            (args.epochs*args.num_datapoints)/(stop_time - start_time)))
