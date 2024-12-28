@@ -92,7 +92,7 @@ class DatasetGenerator(Sequence):
         self.crop_dim = crop_dim  
 
         self.filenames = filenames
-        self.batch_size = batch_size
+        self.batch_size = 8
 
         self.augment = augment
         self.seed = seed
@@ -201,7 +201,7 @@ class DatasetGenerator(Sequence):
                 img_filename   = label_filename.replace("labelsTr", "imagesTr")  # Medical Decathlon
                 
                 img = np.array(nib.load(img_filename).dataobj)
-                img = img[:,:,:,0]  # Just take FLAIR channel (channel 0)
+                img = img[:,:,:]  # Just take FLAIR channel (channel 0)
                 img = self.preprocess_img(img)
 
                 label = np.array(nib.load(label_filename).dataobj)

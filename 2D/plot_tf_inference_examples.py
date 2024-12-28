@@ -150,7 +150,7 @@ if __name__ == "__main__":
 
     trainFiles, validateFiles, testFiles = get_decathlon_filelist(data_path=args.data_path, seed=args.seed, split=args.split)
 
-    ds_test = DatasetGenerator(testFiles, batch_size=128, crop_dim=[args.crop_dim,args.crop_dim], augment=False, seed=args.seed)
+    ds_test = DatasetGenerator(testFiles, batch_size=64, crop_dim=[args.crop_dim,args.crop_dim], augment=False, seed=args.seed)
 
     # Load model
     if args.use_pconv:

@@ -37,7 +37,7 @@ enough memory, it is easiest just to select a sufficiently
 large batch size to make sure we have a few slices with
 tumors in each batch.
 """
-BATCH_SIZE = 128
+BATCH_SIZE = 35
 
 # Using Adam optimizer
 LEARNING_RATE = 0.0001  # 0.00005
