@@ -91,42 +91,57 @@ def calc_soft_dice(target, prediction, smooth=0.0001):
 
 
 def plot_results(ds, batch_num, png_directory, exec_net, input_layer_name, output_layer_name):
+    """
+    Plots and saves images at 25%, 50%, and 75% slice indices for each test image.
     
-    plt.figure(figsize=(10,10))
-
+    Parameters:
+        ds: DatasetGenerator instance
+        batch_num: Current batch number
+        png_directory: Directory to save the PNG files
+        exec_net: Inference engine executable network
+        input_layer_name: Name of the input layer
+        output_layer_name: Name of the output layer
+    """
     img, msk = next(ds.ds)
 
-    idx = np.argmax(np.sum(np.sum(msk[:,:,:,0], axis=1), axis=1)) # find the slice with the largest tumor
+    # Determine the slice indices (25%, 50%, and 75%)
+    slice_indices = [
+        int(img.shape[0] * 0.25),
+        int(img.shape[0] * 0.50),
+        int(img.shape[0] * 0.75)
+    ]
 
-    plt.subplot(1, 3, 1)
-    plt.imshow(img[idx, :, :, 0], cmap="bone", origin="lower")
-    plt.title("MRI {}".format(idx), fontsize=20)
+    for idx in slice_indices:
+        plt.figure(figsize=(10, 10))
 
-    plt.subplot(1, 3, 2)
-    plt.imshow(msk[idx, :, :], cmap="bone", origin="lower")
-    plt.title("Ground truth", fontsize=20)
+        plt.subplot(1, 3, 1)
+        plt.imshow(img[idx, :, :, 0], cmap="bone", origin="lower")
+        plt.title(f"MRI Slice {idx}", fontsize=20)
 
-    plt.subplot(1, 3, 3)
+        plt.subplot(1, 3, 2)
+        plt.imshow(msk[idx, :, :], cmap="bone", origin="lower")
+        plt.title("Ground truth", fontsize=20)
 
-    print("Index {}: ".format(idx), end="")
+        plt.subplot(1, 3, 3)
 
-    # Predict using the OpenVINO model
-    # NOTE: OpenVINO expects channels first for input and output
-    # So we transpose the input and output
-    start_time = time.time()
-    res = exec_net.infer({input_layer_name: np.transpose(img[[idx]], [0,3,1,2])})
-    prediction = np.transpose(res[output_layer_name], [0,2,3,1])    
-    print("Elapsed time = {:.4f} msecs, ".format(1000.0*(time.time()-start_time)), end="")
-    
-    plt.imshow(prediction[0,:,:,0], cmap="bone", origin="lower")
-    dice_coef = calc_dice(msk[idx], prediction)
-    plt.title("Prediction\nDice = {:.4f}".format(dice_coef), fontsize=20)
+        # Predict using the OpenVINO model
+        # NOTE: OpenVINO expects channels first for input and output
+        # So we transpose the input and output
+        start_time = time.time()
+        res = exec_net.infer({input_layer_name: np.transpose(img[[idx]], [0, 3, 1, 2])})
+        prediction = np.transpose(res[output_layer_name], [0, 2, 3, 1])
+        elapsed_time = 1000.0 * (time.time() - start_time)
+        
+        plt.imshow(prediction[0, :, :, 0], cmap="bone", origin="lower")
+        dice_coef = calc_dice(msk[idx], prediction)
+        plt.title(f"Prediction\nDice = {dice_coef:.4f}", fontsize=20)
 
-    print("Dice coefficient = {:.4f}, ".format(dice_coef), end="")
-    
-    save_name = os.path.join(png_directory, "prediction_openvino_{}_{}.png".format(batch_num, idx))
-    print("Saved as: {}".format(save_name))
-    plt.savefig(save_name)
+        # Save the image
+        save_name = os.path.join(png_directory, f"prediction_openvino_batch{batch_num}_slice{idx}.png")
+        print(f"Slice {idx}: Elapsed time = {elapsed_time:.4f} msecs, Dice coefficient = {dice_coef:.4f}, Saved as: {save_name}")
+        plt.savefig(save_name)
+        plt.close()
+
 
 if __name__ == "__main__":
 
