@@ -20,7 +20,7 @@
 import psutil
 import os
 
-DATA_PATH=os.path.join("/data/medical_decathlon/Task01_BrainTumour")
+DATA_PATH=os.path.join("D:\Task07_Pancreas")
 OUT_PATH = os.path.join("./output/")
 INFERENCE_FILENAME = "2d_unet_decathlon"
 
@@ -37,10 +37,10 @@ enough memory, it is easiest just to select a sufficiently
 large batch size to make sure we have a few slices with
 tumors in each batch.
 """
-BATCH_SIZE = 35
+BATCH_SIZE = 128
 
 # Using Adam optimizer
-LEARNING_RATE = 0.0001  # 0.00005
+LEARNING_RATE = 0.0003  # 0.00005
 WEIGHT_DICE_LOSS = 0.85  # Combined loss weight for dice versus BCE
 
 FEATURE_MAPS = 16
@@ -58,7 +58,7 @@ NUM_INTER_THREADS = 1
 import multiprocessing
 NUM_INTRA_THREADS = min(len(psutil.Process().cpu_affinity()), psutil.cpu_count(logical=False))
 
-CROP_DIM=128  # Crop height and width to this size
+CROP_DIM=256  # Crop height and width to this size
 SEED=816      # Random seed
 TRAIN_TEST_SPLIT=0.80 # The train/test split
 
